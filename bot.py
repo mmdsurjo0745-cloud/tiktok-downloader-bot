@@ -4,6 +4,7 @@ import time
 import logging
 import yt_dlp
 import requests
+import re
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
@@ -70,9 +71,13 @@ async def download_handler(client, message: Message):
     progress_data = {"status": "downloading", "percent": "0%", "method": "HD"}
     msg = await message.reply_text("⏳ অরিজিনাল HD ভিডিও ডাউনলোড হচ্ছে...\n[░░░░░░░░░░░░░░░] 0%")
     
+    # ডিফল্ট ফাইলের নাম (পরে এতে টাইটেল যুক্ত হবে)
     file_name = f"video_{message.from_user.id}.mp4"
+    video_title = "Video" # ডিফল্ট টাইটেল
 
     def download_logic():
+        nonlocal video_title
+        
         def ytdlp_hook(d):
             if d['status'] == 'downloading':
                 total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
@@ -82,35 +87,32 @@ async def download_handler(client, message: Message):
                     progress_data["percent"] = f"{percent}%"
 
         ydl_opts = {
-            # ফুল HD (1080p) এবং অডিও একসাথে ডাউনলোডের জন্য সেরা কনফিগারেশন
             'format': 'bestvideo*+bestaudio/best', 
             'outtmpl': file_name,
             'quiet': True,
             'no_warnings': True,
             'impersonate': 'chrome',
             'progress_hooks': [ytdlp_hook],
-            # ইনস্টাগ্রাম ও টিকটকের জন্য অতিরিক্ত হেডার
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            }
         }
         
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                info = ydl.extract_info(url, download=True)
+                # ভিডিওর আসল টাইটেল বের করা
+                raw_title = info.get('title', 'TikTok_Video')
+                video_title = raw_title
+                
             if os.path.exists(file_name):
                 return True
         except Exception as e:
             logger.warning(f"yt-dlp failed for {url}. Reason: {repr(e)}")
             
             if is_instagram:
-                raise Exception("ইনস্টাগ্রাম ভিডিওটি ডাউনলোড করা যাচ্ছে না। (ইনস্টাগ্রাম মাঝে মাঝে বট ব্লক করে)")
+                raise Exception("ইনস্টাগ্রাম ভিডিওটি ডাউনলোড করা যাচ্ছে না।")
 
         # TikWM API Fallback (শুধুমাত্র টিকটকের জন্য)
         if is_tiktok:
             progress_data["percent"] = "API Mode"
-            progress_data["method"] = "TikWM"
-            
             api_url = "https://www.tikwm.com/api/"
             payload = {"url": url, "hd": 1}
             response = requests.post(api_url, data=payload, timeout=30)
@@ -119,7 +121,12 @@ async def download_handler(client, message: Message):
             if data.get("code") != 0:
                 raise Exception(f"API Error: {data.get('msg')}")
 
-            video_url = data.get("data", {}).get("hdplay") or data.get("data", {}).get("play")
+            video_info = data.get("data", {})
+            video_url = video_info.get("hdplay") or video_info.get("play")
+            
+            # API থেকে টাইটেল নেওয়া
+            video_title = video_info.get("title", "TikTok_Video")
+
             if not video_url:
                 raise Exception("কোনো ভিডিও লিংক পাওয়া যায়নি।")
 
@@ -170,17 +177,18 @@ async def download_handler(client, message: Message):
         progress_data["status"] = "done"
         await progress_task
 
+        # ফাইলের নামের জন্য টাইটেল পরিষ্কার করা (অবৈধ ক্যারেক্টার রিমুভ করা)
+        safe_title = re.sub(r'[\\/*?:"<>|]', "", video_title)
+        safe_title = safe_title[:60] if safe_title else "Video"
+        
         start_time = time.time()
         await msg.edit_text("📤 ভিডিও আপলোড হচ্ছে (কমপ্রেসন ছাড়া)...\n[░░░░░░░░░░░░░░░] 0%")
         
-        # ---------------------------------------------------------
-        # 🔥 এখানে send_video এর বদলে send_document ব্যবহার করা হয়েছে 
-        # যাতে টেলিগ্রাম একদমই ভিডিও কমপ্রেস না করে (Full HD নিশ্চিত)
-        # ---------------------------------------------------------
         await client.send_document(
             chat_id=message.chat.id,
             document=file_name,
-            caption="✅ আপনার ভিডিও ফুল HD (কমপ্রেসন ছাড়া) ডাউনলোড সম্পন্ন হয়েছে।",
+            file_name=f"{safe_title}.mp4", # ফাইলের নামে টাইটেল বসানো হলো
+            caption=f"✅ আপনার ভিডিও ফুল HD (কমপ্রেসন ছাড়া) ডাউনলোড সম্পন্ন হয়েছে।\n\n📝 **টাইটেল:** {video_title}",
             progress=upload_progress,
             progress_args=(msg,)
         )
