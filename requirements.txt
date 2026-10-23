@@ -1,5 +1,5 @@
 pyrogram
-rahad-all-downloader
+yt-dlp
 requests
 staypresent[prod]
 curl_cffi
