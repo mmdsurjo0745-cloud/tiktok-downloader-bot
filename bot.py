@@ -4,7 +4,6 @@ import logging
 import requests
 from pyrogram import Client, filters
 from pyrogram.types import Message
-from rahad_all_downloader import alldl
 
 # Render-এ Event Loop এরর এড়ানোর ফিক্স
 try:
@@ -24,7 +23,7 @@ app = Client("TikTokDownloaderBot", api_id=API_ID, api_hash=API_HASH, bot_token=
 
 @app.on_message(filters.command("start"))
 async def start_handler(client, message: Message):
-    await message.reply_text("স্বাগতম! আমাকে যেকোনো টিকটক ভিডিওর লিংক পাঠান, আমি সেটা ওয়াটারমার্ক ছাড়া ডাউনলোড করে দিব।")
+    await message.reply_text("স্বাগতম! আমাকে যেকোনো টিকটক ভিডিওর লিংক পাঠান, আমি সেটা ওয়াটারমার্ক ছাড়া ফুল HD কোয়ালিটিতে ডাউনলোড করে দিব।")
 
 @app.on_message(filters.text & filters.private & ~filters.command("start"))
 async def download_handler(client, message: Message):
@@ -38,27 +37,43 @@ async def download_handler(client, message: Message):
     file_name = f"video_{message.from_user.id}.mp4"
 
     try:
-        # TikWM API ভিত্তিক লাইব্রেরি থেকে ওয়াটারমার্ক ছাড়া ভিডিও লিংক নেওয়া
-        result = alldl(url)
-        video_url = result.get("videoUrl")
-        
-        if not video_url:
-            raise Exception("ভিডিও লিংক পাওয়া যায়নি।")
+        # ব্লকিং কাজগুলো একটি আলাদা থ্রেডে চালানো হচ্ছে
+        def download_hd_video():
+            # TikWM API-তে HD রিকোয়েস্ট পাঠানো (hd=1)
+            api_url = "https://www.tikwm.com/api/"
+            payload = {"url": url, "hd": 1}
+            response = requests.post(api_url, data=payload, timeout=30)
+            response.raise_for_status()
+            data = response.json()
 
-        # সরাসরি ভিডিও ডাউনলোড
-        response = requests.get(video_url, stream=True, timeout=30)
-        response.raise_for_status()
-        
-        with open(file_name, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=1024*1024):
-                if chunk:
-                    f.write(chunk)
+            if data.get("code") != 0:
+                raise Exception(f"TikWM API Error: {data.get('msg', 'Unknown error')}")
 
-        # টেলিগ্রামে পাঠানো
+            # HD লিংক নেওয়া, না পেলে সাধারণ প্লে লিংক
+            video_info = data.get("data", {})
+            video_url = video_info.get("hdplay") or video_info.get("play")
+            
+            if not video_url:
+                raise Exception("ভিডিও লিংক পাওয়া যায়নি।")
+
+            # ভিডিও ডাউনলোড
+            video_res = requests.get(video_url, stream=True, timeout=60)
+            video_res.raise_for_status()
+            
+            with open(file_name, 'wb') as f:
+                for chunk in video_res.iter_content(chunk_size=1024*1024):
+                    if chunk:
+                        f.write(chunk)
+            return True
+
+        # asyncio.to_thread ব্যবহার করে ইভেন্ট লুপ ব্লক এড়ানো হচ্ছে
+        await asyncio.to_thread(download_hd_video)
+
+        # টেলিগ্রামে ভিডিও পাঠানো
         await client.send_video(
             chat_id=message.chat.id,
             video=file_name,
-            caption="✅ আপনার ভিডিও ডাউনলোড সম্পন্ন হয়েছে।"
+            caption="✅ আপনার ভিডিও ফুল HD কোয়ালিটিতে ডাউনলোড সম্পন্ন হয়েছে।"
         )
         await msg.delete()
 
@@ -66,7 +81,6 @@ async def download_handler(client, message: Message):
         logger.error(f"Download Error: {e}")
         await msg.edit_text(f"❌ ভিডিও ডাউনলোডে সমস্যা হয়েছে।\n\nError: {str(e)}")
     finally:
-        # ডাউনলোড শেষে সার্ভার থেকে ফাইল ডিলিট
         if os.path.exists(file_name):
             os.remove(file_name)
 
