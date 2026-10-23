@@ -1,3 +1,4 @@
+import asyncio
 import os
 import logging
 import yt_dlp
@@ -5,21 +6,19 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 
 # =====================================================================
-# 🚨 এখানে আপনার তথ্য বসান (শুধু ভেতরের লেখাগুলো পরিবর্তন করবেন) 🚨
+# 🚨 Render-এ Python 3.14 এর Event Loop এরর সমাধানের জন্য ফিক্স 🚨
 # =====================================================================
-
-# ১. আপনার API_ID বসান (এটি শুধুই সংখ্যা, কোনো কোটেশন মার্ক ছাড়া)
-API_ID = 28916789  
-
-# ২. আপনার API_HASH বসান (ডাবল কোটেশন " " এর ভেতরে)
-API_HASH = "9a935a36d558603970dad721e7fe5a26" 
-
-# ৩. আপনার BOT_TOKEN বসান (ডাবল কোটেশন " " এর ভেতরে)
-BOT_TOKEN = "8870160552:AAHUk6pnoprwwuThNsXUyKIFajh3LeW3BRs" 
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 # =====================================================================
-# এর নিচের কোডে হাত দেওয়ার প্রয়োজন নেই
+# Render-এর Environment Variables থেকে তথ্য নেওয়া হচ্ছে
 # =====================================================================
+API_ID = int(os.getenv("API_ID", "28916789")) # Render থেকে নেবে, না পেলে ডিফল্টটি নেবে
+API_HASH = os.getenv("API_HASH")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # লগিং সেটআপ
 logging.basicConfig(level=logging.INFO)
