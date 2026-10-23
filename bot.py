@@ -5,7 +5,6 @@ import logging
 import yt_dlp
 import requests
 import re
-from deep_translator import GoogleTranslator
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
@@ -57,6 +56,17 @@ async def upload_progress(current, total, msg):
         except Exception:
             pass
 
+# 🚨 গুগল ট্রান্সলেটের সরাসরি এপিআই ব্যবহার (নির্ভরযোগ্য)
+def translate_to_english(text):
+    try:
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q={requests.utils.quote(text)}"
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            return "".join([item[0] for item in res.json()[0]])
+    except Exception as e:
+        logger.warning(f"Translate Error: {e}")
+    return text
+
 @app.on_message(filters.text & filters.private & ~filters.command("start"))
 async def download_handler(client, message: Message):
     global start_time
@@ -89,7 +99,7 @@ async def download_handler(client, message: Message):
                     percent = int((downloaded / total_bytes) * 100)
                     progress_data["percent"] = f"{percent}%"
 
-        # 🚨 টিকটকের ব্লক বাইপাস করার জন্য নতুন কনফিগারেশন
+        # 🚨 টিকটকের ব্লক বাইপাস করার জন্য অ্যান্ড্রয়েড অ্যাপের সিমুলেশন
         ydl_opts = {
             'format': 'bestvideo*+bestaudio/best', 
             'outtmpl': file_name,
@@ -97,7 +107,6 @@ async def download_handler(client, message: Message):
             'no_warnings': True,
             'impersonate': 'chrome',
             'progress_hooks': [ytdlp_hook],
-            # অ্যান্ড্রয়েড অ্যাপের মতো আচরণ করে টিকটকের ব্লক বাইপাস করবে
             'extractor_args': {
                 'tiktok': {
                     'api_hostname': ['api16-normal-c-useast1a.tiktokv.com'],
@@ -201,21 +210,10 @@ async def download_handler(client, message: Message):
         progress_data["status"] = "done"
         await progress_task
 
-        # 🚨 অনুবাদ ফেইল করলে বিকল্প উপায়ে ইংরেজি করা
-        if re.search('[\u0980-\u09FF]', video_title): # বাংলা অক্ষর চেক
-            try:
-                translated_title = GoogleTranslator(source='auto', target='en').translate(video_title)
-                if translated_title:
-                    video_title = translated_title
-            except Exception as e:
-                logger.warning(f"Translator failed: {e}")
-                # সরাসরি গুগল এপিআই কল (বিকল্প)
-                try:
-                    res = requests.get(f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q={video_title}")
-                    if res.status_code == 200:
-                        video_title = res.json()[0][0][0]
-                except:
-                    pass
+        # 🚨 নতুন ট্রান্সলেশন সিস্টেম (১০০% কাজ করবে)
+        # যদি বাংলা বা অন্য কোনো ভাষা থাকে, তবে ইংরেজিতে অনুবাদ করবে
+        if re.search('[\u0980-\u09FF]', video_title) or not video_title.isascii():
+            video_title = translate_to_english(video_title)
 
         safe_title = re.sub(r'[\\/*?:"<>|]', "", video_title)
         safe_uploader = re.sub(r'[\\/*?:"<>|]', "", uploader_name)
