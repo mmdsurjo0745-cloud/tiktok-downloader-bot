@@ -74,12 +74,12 @@ async def download_handler(client, message: Message):
     
     file_name = f"video_{message.from_user.id}.mp4"
     
-    # ডিফল্ট মান
     video_title = "No Title"
     uploader_name = "Unknown User"
+    download_source = "Unknown"
 
     def download_logic():
-        nonlocal video_title, uploader_name
+        nonlocal video_title, uploader_name, download_source
         
         def ytdlp_hook(d):
             if d['status'] == 'downloading':
@@ -89,6 +89,7 @@ async def download_handler(client, message: Message):
                     percent = int((downloaded / total_bytes) * 100)
                     progress_data["percent"] = f"{percent}%"
 
+        # 🚨 এখানে extractor_args যুক্ত করা হয়েছে যা টিকটকের ব্লক বাইপাস করে অরিজিনাল HD নামায়
         ydl_opts = {
             'format': 'bestvideo*+bestaudio/best', 
             'outtmpl': file_name,
@@ -96,6 +97,7 @@ async def download_handler(client, message: Message):
             'no_warnings': True,
             'impersonate': 'chrome',
             'progress_hooks': [ytdlp_hook],
+            'extractor_args': {'tiktok': {'api_hostname': ['api22-normal-c-useast2a.tiktokv.com']}}
         }
         
         try:
@@ -110,6 +112,8 @@ async def download_handler(client, message: Message):
                 if raw_uploader and str(raw_uploader).strip():
                     uploader_name = str(raw_uploader).strip().replace("@", "")
                 
+                download_source = "yt-dlp (Original HD)"
+                
             if os.path.exists(file_name):
                 return True
         except Exception as e:
@@ -118,7 +122,7 @@ async def download_handler(client, message: Message):
             if is_instagram:
                 raise Exception("ইনস্টাগ্রাম ভিডিওটি ডাউনলোড করা যাচ্ছে না।")
 
-        # TikWM API Fallback
+        # TikWM API Fallback (শুধুমাত্র টিকটকের জন্য)
         if is_tiktok:
             progress_data["percent"] = "API Mode"
             api_url = "https://www.tikwm.com/api/"
@@ -158,6 +162,8 @@ async def download_handler(client, message: Message):
                         if total_size > 0:
                             percent = int((downloaded / total_size) * 100)
                             progress_data["percent"] = f"{percent}%"
+            
+            download_source = "TikWM API (Fallback HD)"
             return True
         
         raise Exception("ভিডিও ডাউনলোড করা যায়নি।")
@@ -189,9 +195,8 @@ async def download_handler(client, message: Message):
         progress_data["status"] = "done"
         await progress_task
 
-        # 🚨 এখানে জোরপূর্বক ইংরেজিতে অনুবাদের ব্যবস্থা করা হয়েছে
+        # টাইটেল ইংরেজিতে অনুবাদ
         try:
-            # যদি টাইটেল বাংলা বা অন্য কোনো ভাষায় হয়, তবে এটি ইংরেজিতে অনুবাদ করবে
             translated_title = GoogleTranslator(source='auto', target='en').translate(video_title)
             if translated_title:
                 video_title = translated_title
@@ -206,13 +211,18 @@ async def download_handler(client, message: Message):
         start_time = time.time()
         await msg.edit_text("📤 ভিডিও আপলোড হচ্ছে (কমপ্রেসন ছাড়া)...\n[░░░░░░░░░░░░░░░] 0%")
         
+        # ফাইল সাইজ বের করা MB তে
+        file_size_mb = os.path.getsize(file_name) / (1024 * 1024)
+        
         await client.send_document(
             chat_id=message.chat.id,
             document=file_name,
             file_name=final_file_name, 
-            caption=f"✅ **ভিডিও ডাউনলোড সম্পন্ন (Full HD)**\n\n"
+            caption=f"✅ **ভিডিও ডাউনলোড সম্পন্ন**\n\n"
                     f"👤 **ইউজারনেম (ID):** @{uploader_name}\n"
-                    f"📝 **টাইটেল:** {video_title}",
+                    f"📝 **টাইটেল:** {video_title}\n"
+                    f"📦 **সাইজ:** {file_size_mb:.2f} MB\n"
+                    f"⚙️ **সোর্স:** {download_source}",
             progress=upload_progress,
             progress_args=(msg,)
         )
