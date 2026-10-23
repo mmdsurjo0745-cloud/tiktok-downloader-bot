@@ -5,6 +5,7 @@ import logging
 import yt_dlp
 import requests
 import re
+from deep_translator import GoogleTranslator
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
@@ -101,19 +102,13 @@ async def download_handler(client, message: Message):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 
-                # ১. টাইটেল বের করা
                 raw_title = info.get('title') or info.get('description')
                 if raw_title and str(raw_title).strip():
                     video_title = str(raw_title).strip()[:100] 
-                else:
-                    video_title = "No Title Provided"
                 
-                # ২. আপলোডারের Unique ID (Handle) বের করা
                 raw_uploader = info.get('uploader_id') or info.get('uploader') or info.get('channel')
                 if raw_uploader and str(raw_uploader).strip():
                     uploader_name = str(raw_uploader).strip().replace("@", "")
-                else:
-                    uploader_name = "Unknown_Creator"
                 
             if os.path.exists(file_name):
                 return True
@@ -123,7 +118,7 @@ async def download_handler(client, message: Message):
             if is_instagram:
                 raise Exception("ইনস্টাগ্রাম ভিডিওটি ডাউনলোড করা যাচ্ছে না।")
 
-        # TikWM API Fallback (শুধুমাত্র টিকটকের জন্য)
+        # TikWM API Fallback
         if is_tiktok:
             progress_data["percent"] = "API Mode"
             api_url = "https://www.tikwm.com/api/"
@@ -137,20 +132,14 @@ async def download_handler(client, message: Message):
             video_info = data.get("data", {})
             video_url = video_info.get("hdplay") or video_info.get("play")
             
-            # এপিআই থেকে টাইটেল নেওয়া
             api_title = video_info.get("title")
             if api_title and str(api_title).strip():
                 video_title = str(api_title).strip()[:100]
-            else:
-                video_title = "No Title Provided"
 
-            # এপিআই থেকে আপলোডারের Unique ID নেওয়া
             author_info = video_info.get("author", {})
             api_uploader = author_info.get("unique_id") or author_info.get("nickname")
             if api_uploader and str(api_uploader).strip():
                 uploader_name = str(api_uploader).strip().replace("@", "")
-            else:
-                uploader_name = "Unknown_Creator"
 
             if not video_url:
                 raise Exception("কোনো ভিডিও লিংক পাওয়া যায়নি।")
@@ -196,17 +185,22 @@ async def download_handler(client, message: Message):
 
     try:
         progress_task = asyncio.create_task(update_progress())
-
         await asyncio.to_thread(download_logic)
-        
         progress_data["status"] = "done"
         await progress_task
 
-        # ফাইলের নামের জন্য টাইটেল ও আপলোডারের নাম পরিষ্কার করা
+        # 🚨 এখানে জোরপূর্বক ইংরেজিতে অনুবাদের ব্যবস্থা করা হয়েছে
+        try:
+            # যদি টাইটেল বাংলা বা অন্য কোনো ভাষায় হয়, তবে এটি ইংরেজিতে অনুবাদ করবে
+            translated_title = GoogleTranslator(source='auto', target='en').translate(video_title)
+            if translated_title:
+                video_title = translated_title
+        except Exception as e:
+            logger.warning(f"Translation failed: {e}")
+
         safe_title = re.sub(r'[\\/*?:"<>|]', "", video_title)
         safe_uploader = re.sub(r'[\\/*?:"<>|]', "", uploader_name)
         
-        # ফাইলের নাম সেট করা (যেমন: @username - Title.mp4)
         final_file_name = f"@{safe_uploader} - {safe_title[:30]}.mp4"
         
         start_time = time.time()
