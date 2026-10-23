@@ -1,30 +1,25 @@
 import asyncio
 import os
 import logging
-import yt_dlp
+import requests
 from pyrogram import Client, filters
 from pyrogram.types import Message
+from rahad_all_downloader import alldl
 
-# =====================================================================
-# 🚨 Render-এ Python 3.14 এর Event Loop এরর সমাধানের জন্য ফিক্স 🚨
-# =====================================================================
+# Render-এ Event Loop এরর এড়ানোর ফিক্স
 try:
     asyncio.get_event_loop()
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 
-# =====================================================================
-# Render-এর Environment Variables থেকে তথ্য নেওয়া হচ্ছে
-# =====================================================================
+# Render-এর Environment Variables থেকে তথ্য নেওয়া
 API_ID = int(os.getenv("API_ID", "28916789"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# লগিং সেটআপ
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# বট ক্লায়েন্ট চালু করা
 app = Client("TikTokDownloaderBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 @app.on_message(filters.command("start"))
@@ -33,34 +28,33 @@ async def start_handler(client, message: Message):
 
 @app.on_message(filters.text & filters.private & ~filters.command("start"))
 async def download_handler(client, message: Message):
-    url = message.text
+    url = message.text.strip()
     
-    # লিংক চেক করা
     if "tiktok.com" not in url:
         await message.reply_text("দয়া করে একটি সঠিক টিকটক ভিডিও লিংক পাঠান।")
         return
 
     msg = await message.reply_text("⏳ ভিডিও ডাউনলোড হচ্ছে, একটু অপেক্ষা করুন...")
-
-    # ফাইলের নাম সেট করা
     file_name = f"video_{message.from_user.id}.mp4"
 
-    # yt-dlp এর সেটিংস (curl_cffi এবং impersonate সহ)
-    ydl_opts = {
-        'format': 'b', 
-        'outtmpl': file_name,
-        'quiet': True,
-        'no_warnings': True,
-        'impersonate': 'chrome', # এটি টিকটকের ব্লক এড়াতে সাহায্য করবে
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-
     try:
-        # ভিডিও ডাউনলোড
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        # TikWM API ভিত্তিক লাইব্রেরি থেকে ওয়াটারমার্ক ছাড়া ভিডিও লিংক নেওয়া
+        result = alldl(url)
+        video_url = result.get("videoUrl")
+        
+        if not video_url:
+            raise Exception("ভিডিও লিংক পাওয়া যায়নি।")
 
-        # টেলিগ্রামে ভিডিও পাঠানো
+        # সরাসরি ভিডিও ডাউনলোড
+        response = requests.get(video_url, stream=True, timeout=30)
+        response.raise_for_status()
+        
+        with open(file_name, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=1024*1024):
+                if chunk:
+                    f.write(chunk)
+
+        # টেলিগ্রামে পাঠানো
         await client.send_video(
             chat_id=message.chat.id,
             video=file_name,
@@ -68,13 +62,13 @@ async def download_handler(client, message: Message):
         )
         await msg.delete()
 
-        # ডাউনলোড শেষে ফাইলটি সার্ভার থেকে ডিলিট করে দেওয়া
+    except Exception as e:
+        logger.error(f"Download Error: {e}")
+        await msg.edit_text(f"❌ ভিডিও ডাউনলোডে সমস্যা হয়েছে।\n\nError: {str(e)}")
+    finally:
+        # ডাউনলোড শেষে সার্ভার থেকে ফাইল ডিলিট
         if os.path.exists(file_name):
             os.remove(file_name)
-
-    except Exception as e:
-        logger.error(f"Error: {e}")
-        await msg.edit_text(f"❌ ভিডিও ডাউনলোডে সমস্যা হয়েছে।\n\nError: {str(e)}")
 
 if __name__ == "__main__":
     print("বট চালু হচ্ছে...")
