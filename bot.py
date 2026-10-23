@@ -71,12 +71,14 @@ async def download_handler(client, message: Message):
     progress_data = {"status": "downloading", "percent": "0%", "method": "HD"}
     msg = await message.reply_text("⏳ অরিজিনাল HD ভিডিও ডাউনলোড হচ্ছে...\n[░░░░░░░░░░░░░░░] 0%")
     
-    # ডিফল্ট ফাইলের নাম (পরে এতে টাইটেল যুক্ত হবে)
     file_name = f"video_{message.from_user.id}.mp4"
-    video_title = "Video" # ডিফল্ট টাইটেল
+    
+    # ডিফল্ট মান
+    video_title = "No Title"
+    uploader_name = "Unknown User"
 
     def download_logic():
-        nonlocal video_title
+        nonlocal video_title, uploader_name
         
         def ytdlp_hook(d):
             if d['status'] == 'downloading':
@@ -98,9 +100,20 @@ async def download_handler(client, message: Message):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                # ভিডিওর আসল টাইটেল বের করা
-                raw_title = info.get('title', 'TikTok_Video')
-                video_title = raw_title
+                
+                # ১. টাইটেল বের করা
+                raw_title = info.get('title') or info.get('description')
+                if raw_title and str(raw_title).strip():
+                    video_title = str(raw_title).strip()[:100] 
+                else:
+                    video_title = "No Title Provided"
+                
+                # ২. আপলোডারের Unique ID (Handle) বের করা
+                raw_uploader = info.get('uploader_id') or info.get('uploader') or info.get('channel')
+                if raw_uploader and str(raw_uploader).strip():
+                    uploader_name = str(raw_uploader).strip().replace("@", "")
+                else:
+                    uploader_name = "Unknown_Creator"
                 
             if os.path.exists(file_name):
                 return True
@@ -124,8 +137,20 @@ async def download_handler(client, message: Message):
             video_info = data.get("data", {})
             video_url = video_info.get("hdplay") or video_info.get("play")
             
-            # API থেকে টাইটেল নেওয়া
-            video_title = video_info.get("title", "TikTok_Video")
+            # এপিআই থেকে টাইটেল নেওয়া
+            api_title = video_info.get("title")
+            if api_title and str(api_title).strip():
+                video_title = str(api_title).strip()[:100]
+            else:
+                video_title = "No Title Provided"
+
+            # এপিআই থেকে আপলোডারের Unique ID নেওয়া
+            author_info = video_info.get("author", {})
+            api_uploader = author_info.get("unique_id") or author_info.get("nickname")
+            if api_uploader and str(api_uploader).strip():
+                uploader_name = str(api_uploader).strip().replace("@", "")
+            else:
+                uploader_name = "Unknown_Creator"
 
             if not video_url:
                 raise Exception("কোনো ভিডিও লিংক পাওয়া যায়নি।")
@@ -177,9 +202,12 @@ async def download_handler(client, message: Message):
         progress_data["status"] = "done"
         await progress_task
 
-        # ফাইলের নামের জন্য টাইটেল পরিষ্কার করা (অবৈধ ক্যারেক্টার রিমুভ করা)
+        # ফাইলের নামের জন্য টাইটেল ও আপলোডারের নাম পরিষ্কার করা
         safe_title = re.sub(r'[\\/*?:"<>|]', "", video_title)
-        safe_title = safe_title[:60] if safe_title else "Video"
+        safe_uploader = re.sub(r'[\\/*?:"<>|]', "", uploader_name)
+        
+        # ফাইলের নাম সেট করা (যেমন: @username - Title.mp4)
+        final_file_name = f"@{safe_uploader} - {safe_title[:30]}.mp4"
         
         start_time = time.time()
         await msg.edit_text("📤 ভিডিও আপলোড হচ্ছে (কমপ্রেসন ছাড়া)...\n[░░░░░░░░░░░░░░░] 0%")
@@ -187,8 +215,10 @@ async def download_handler(client, message: Message):
         await client.send_document(
             chat_id=message.chat.id,
             document=file_name,
-            file_name=f"{safe_title}.mp4", # ফাইলের নামে টাইটেল বসানো হলো
-            caption=f"✅ আপনার ভিডিও ফুল HD (কমপ্রেসন ছাড়া) ডাউনলোড সম্পন্ন হয়েছে।\n\n📝 **টাইটেল:** {video_title}",
+            file_name=final_file_name, 
+            caption=f"✅ **ভিডিও ডাউনলোড সম্পন্ন (Full HD)**\n\n"
+                    f"👤 **ইউজারনেম (ID):** @{uploader_name}\n"
+                    f"📝 **টাইটেল:** {video_title}",
             progress=upload_progress,
             progress_args=(msg,)
         )
