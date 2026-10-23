@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 import logging
 import yt_dlp
 import requests
@@ -24,24 +25,54 @@ app = Client("TikTokDownloaderBot", api_id=API_ID, api_hash=API_HASH, bot_token=
 
 @app.on_message(filters.command("start"))
 async def start_handler(client, message: Message):
-    await message.reply_text("স্বাগতম! আমাকে যেকোনো টিকটক ভিডিওর লিংক পাঠান, আমি সেটা ওয়াটারমার্ক ছাড়া ফুল HD কোয়ালিটিতে ডাউনলোড করে দিব।")
+    await message.reply_text(
+        "স্বাগতম! আমাকে যেকোনো **টিকটক** বা **ইনস্টাগ্রাম** ভিডিওর লিংক পাঠান।\n"
+        "আমি সেটা **টেলিগ্রামের কোনো প্রকার কমপ্রেসন ছাড়া (Full HD)** ডাউনলোড করে দিব।"
+    )
+
+last_edit_time = 0
+
+async def upload_progress(current, total, msg):
+    global last_edit_time
+    now = time.time()
+    
+    if now - last_edit_time > 3:
+        last_edit_time = now
+        percent = current * 100 / total
+        bar_length = 15
+        filled = int(bar_length * percent // 100)
+        bar = '█' * filled + '░' * (bar_length - filled)
+        
+        speed = current / (now - start_time) if (now - start_time) > 0 else 0
+        speed_mb = speed / (1024 * 1024)
+        
+        try:
+            await msg.edit_text(
+                f"📤 ভিডিও আপলোড হচ্ছে (কমপ্রেসন ছাড়া)...\n"
+                f"[{bar}] {percent:.1f}%\n"
+                f"⚡ স্পিড: {speed_mb:.2f} MB/s"
+            )
+        except Exception:
+            pass
 
 @app.on_message(filters.text & filters.private & ~filters.command("start"))
 async def download_handler(client, message: Message):
+    global start_time
     url = message.text.strip()
     
-    if "tiktok.com" not in url:
-        await message.reply_text("দয়া করে একটি সঠিক টিকটক ভিডিও লিংক পাঠান।")
+    is_tiktok = "tiktok.com" in url
+    is_instagram = "instagram.com" in url
+    
+    if not (is_tiktok or is_instagram):
+        await message.reply_text("দয়া করে একটি সঠিক টিকটক বা ইনস্টাগ্রাম ভিডিওর লিংক পাঠান।")
         return
 
-    # প্রোগ্রেস ট্র্যাকিং এর জন্য ডিকশনারি
     progress_data = {"status": "downloading", "percent": "0%", "method": "HD"}
-    msg = await message.reply_text("⏳ ভিডিও ডাউনলোড হচ্ছে, একটু অপেক্ষা করুন...\n[░░░░░░░░░░░░░░░] 0%")
+    msg = await message.reply_text("⏳ অরিজিনাল HD ভিডিও ডাউনলোড হচ্ছে...\n[░░░░░░░░░░░░░░░] 0%")
     
     file_name = f"video_{message.from_user.id}.mp4"
 
     def download_logic():
-        # --- পদ্ধতি ১: yt-dlp ---
         def ytdlp_hook(d):
             if d['status'] == 'downloading':
                 total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
@@ -49,15 +80,19 @@ async def download_handler(client, message: Message):
                 if total_bytes > 0:
                     percent = int((downloaded / total_bytes) * 100)
                     progress_data["percent"] = f"{percent}%"
-                    progress_data["method"] = "yt-dlp"
 
         ydl_opts = {
-            'format': 'bestvideo+bestaudio/best', 
+            # ফুল HD (1080p) এবং অডিও একসাথে ডাউনলোডের জন্য সেরা কনফিগারেশন
+            'format': 'bestvideo*+bestaudio/best', 
             'outtmpl': file_name,
             'quiet': True,
             'no_warnings': True,
             'impersonate': 'chrome',
             'progress_hooks': [ytdlp_hook],
+            # ইনস্টাগ্রাম ও টিকটকের জন্য অতিরিক্ত হেডার
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            }
         }
         
         try:
@@ -66,52 +101,57 @@ async def download_handler(client, message: Message):
             if os.path.exists(file_name):
                 return True
         except Exception as e:
-            logger.warning(f"yt-dlp failed, trying fallback API. Reason: {repr(e)}")
+            logger.warning(f"yt-dlp failed for {url}. Reason: {repr(e)}")
+            
+            if is_instagram:
+                raise Exception("ইনস্টাগ্রাম ভিডিওটি ডাউনলোড করা যাচ্ছে না। (ইনস্টাগ্রাম মাঝে মাঝে বট ব্লক করে)")
 
-        # --- পদ্ধতি ২: TikWM API (Fallback) ---
-        progress_data["percent"] = "API Mode"
-        progress_data["method"] = "TikWM API"
+        # TikWM API Fallback (শুধুমাত্র টিকটকের জন্য)
+        if is_tiktok:
+            progress_data["percent"] = "API Mode"
+            progress_data["method"] = "TikWM"
+            
+            api_url = "https://www.tikwm.com/api/"
+            payload = {"url": url, "hd": 1}
+            response = requests.post(api_url, data=payload, timeout=30)
+            data = response.json()
+
+            if data.get("code") != 0:
+                raise Exception(f"API Error: {data.get('msg')}")
+
+            video_url = data.get("data", {}).get("hdplay") or data.get("data", {}).get("play")
+            if not video_url:
+                raise Exception("কোনো ভিডিও লিংক পাওয়া যায়নি।")
+
+            video_res = requests.get(video_url, stream=True, timeout=60)
+            video_res.raise_for_status()
+            
+            total_size = int(video_res.headers.get('content-length', 0))
+            downloaded = 0
+            
+            with open(file_name, 'wb') as f:
+                for chunk in video_res.iter_content(chunk_size=1024*1024):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            percent = int((downloaded / total_size) * 100)
+                            progress_data["percent"] = f"{percent}%"
+            return True
         
-        api_url = "https://www.tikwm.com/api/"
-        payload = {"url": url, "hd": 1}
-        response = requests.post(api_url, data=payload, timeout=30)
-        data = response.json()
+        raise Exception("ভিডিও ডাউনলোড করা যায়নি।")
 
-        if data.get("code") != 0:
-            raise Exception(f"API Error: {data.get('msg')}")
-
-        video_url = data.get("data", {}).get("hdplay") or data.get("data", {}).get("play")
-        if not video_url:
-            raise Exception("কোনো ভিডিও লিংক পাওয়া যায়নি।")
-
-        video_res = requests.get(video_url, stream=True, timeout=60)
-        video_res.raise_for_status()
-        
-        total_size = int(video_res.headers.get('content-length', 0))
-        downloaded = 0
-        
-        with open(file_name, 'wb') as f:
-            for chunk in video_res.iter_content(chunk_size=1024*1024):
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total_size > 0:
-                        percent = int((downloaded / total_size) * 100)
-                        progress_data["percent"] = f"{percent}%"
-        return True
-
-    # প্রোগ্রেস আপডেট করার জন্য ব্যাকগ্রাউন্ড টাস্ক
     async def update_progress():
         bar_length = 15
         last_text = ""
         while progress_data["status"] == "downloading":
-            await asyncio.sleep(2.5) # প্রতি আড়াই সেকেন্ড পর পর আপডেট হবে
+            await asyncio.sleep(2.5)
             
             if progress_data["percent"].endswith("%"):
                 percent_int = int(progress_data["percent"].replace("%", ""))
                 filled = int(bar_length * percent_int // 100)
                 bar = '█' * filled + '░' * (bar_length - filled)
-                text = f"⏳ ডাউনলোড হচ্ছে ({progress_data['method']})...\n[{bar}] {progress_data['percent']}"
+                text = f"⏳ ডাউনলোড হচ্ছে...\n[{bar}] {progress_data['percent']}"
             else:
                 text = f"⏳ ভিডিও ডাউনলোড হচ্ছে ({progress_data['percent']})..."
             
@@ -120,27 +160,29 @@ async def download_handler(client, message: Message):
                     await msg.edit_text(text)
                     last_text = text
                 except Exception:
-                    pass # Ignore flood limits or message deletion
+                    pass
 
     try:
-        # প্রোগ্রেস আপডেটার চালু করা
         progress_task = asyncio.create_task(update_progress())
 
-        # মূল ডাউনলোড শুরু করা
         await asyncio.to_thread(download_logic)
         
-        # ডাউনলোড শেষ হলে প্রোগ্রেস আপডেটার বন্ধ করা
         progress_data["status"] = "done"
         await progress_task
 
-        # টেলিগ্রামে ভিডিও পাঠানো
-        await msg.edit_text("📤 ভিডিও টেলিগ্রামে আপলোড হচ্ছে...")
+        start_time = time.time()
+        await msg.edit_text("📤 ভিডিও আপলোড হচ্ছে (কমপ্রেসন ছাড়া)...\n[░░░░░░░░░░░░░░░] 0%")
         
-        await client.send_video(
+        # ---------------------------------------------------------
+        # 🔥 এখানে send_video এর বদলে send_document ব্যবহার করা হয়েছে 
+        # যাতে টেলিগ্রাম একদমই ভিডিও কমপ্রেস না করে (Full HD নিশ্চিত)
+        # ---------------------------------------------------------
+        await client.send_document(
             chat_id=message.chat.id,
-            video=file_name,
-            caption=f"✅ আপনার ভিডিও ফুল HD কোয়ালিটিতে ডাউনলোড সম্পন্ন হয়েছে।",
-            supports_streaming=True 
+            document=file_name,
+            caption="✅ আপনার ভিডিও ফুল HD (কমপ্রেসন ছাড়া) ডাউনলোড সম্পন্ন হয়েছে।",
+            progress=upload_progress,
+            progress_args=(msg,)
         )
         await msg.delete()
 
