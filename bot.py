@@ -89,7 +89,7 @@ async def download_handler(client, message: Message):
                     percent = int((downloaded / total_bytes) * 100)
                     progress_data["percent"] = f"{percent}%"
 
-        # 🚨 এখানে extractor_args যুক্ত করা হয়েছে যা টিকটকের ব্লক বাইপাস করে অরিজিনাল HD নামায়
+        # 🚨 টিকটকের ব্লক বাইপাস করার জন্য নতুন কনফিগারেশন
         ydl_opts = {
             'format': 'bestvideo*+bestaudio/best', 
             'outtmpl': file_name,
@@ -97,7 +97,13 @@ async def download_handler(client, message: Message):
             'no_warnings': True,
             'impersonate': 'chrome',
             'progress_hooks': [ytdlp_hook],
-            'extractor_args': {'tiktok': {'api_hostname': ['api22-normal-c-useast2a.tiktokv.com']}}
+            # অ্যান্ড্রয়েড অ্যাপের মতো আচরণ করে টিকটকের ব্লক বাইপাস করবে
+            'extractor_args': {
+                'tiktok': {
+                    'api_hostname': ['api16-normal-c-useast1a.tiktokv.com'],
+                    'app_info': ['7355728856979392262'] 
+                }
+            }
         }
         
         try:
@@ -195,13 +201,21 @@ async def download_handler(client, message: Message):
         progress_data["status"] = "done"
         await progress_task
 
-        # টাইটেল ইংরেজিতে অনুবাদ
-        try:
-            translated_title = GoogleTranslator(source='auto', target='en').translate(video_title)
-            if translated_title:
-                video_title = translated_title
-        except Exception as e:
-            logger.warning(f"Translation failed: {e}")
+        # 🚨 অনুবাদ ফেইল করলে বিকল্প উপায়ে ইংরেজি করা
+        if re.search('[\u0980-\u09FF]', video_title): # বাংলা অক্ষর চেক
+            try:
+                translated_title = GoogleTranslator(source='auto', target='en').translate(video_title)
+                if translated_title:
+                    video_title = translated_title
+            except Exception as e:
+                logger.warning(f"Translator failed: {e}")
+                # সরাসরি গুগল এপিআই কল (বিকল্প)
+                try:
+                    res = requests.get(f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q={video_title}")
+                    if res.status_code == 200:
+                        video_title = res.json()[0][0][0]
+                except:
+                    pass
 
         safe_title = re.sub(r'[\\/*?:"<>|]', "", video_title)
         safe_uploader = re.sub(r'[\\/*?:"<>|]', "", uploader_name)
@@ -211,7 +225,6 @@ async def download_handler(client, message: Message):
         start_time = time.time()
         await msg.edit_text("📤 ভিডিও আপলোড হচ্ছে (কমপ্রেসন ছাড়া)...\n[░░░░░░░░░░░░░░░] 0%")
         
-        # ফাইল সাইজ বের করা MB তে
         file_size_mb = os.path.getsize(file_name) / (1024 * 1024)
         
         await client.send_document(
