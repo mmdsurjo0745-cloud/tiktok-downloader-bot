@@ -3,3 +3,4 @@ yt-dlp
 requests
 staypresent[prod]
 curl_cffi
+deep-translator
