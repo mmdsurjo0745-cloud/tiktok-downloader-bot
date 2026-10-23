@@ -1,7 +1,7 @@
 import asyncio
 import os
 import logging
-import requests
+import yt_dlp
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
@@ -38,42 +38,30 @@ async def download_handler(client, message: Message):
 
     try:
         # ব্লকিং কাজগুলো একটি আলাদা থ্রেডে চালানো হচ্ছে
-        def download_hd_video():
-            # TikWM API-তে HD রিকোয়েস্ট পাঠানো (hd=1)
-            api_url = "https://www.tikwm.com/api/"
-            payload = {"url": url, "hd": 1}
-            response = requests.post(api_url, data=payload, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-
-            if data.get("code") != 0:
-                raise Exception(f"TikWM API Error: {data.get('msg', 'Unknown error')}")
-
-            # HD লিংক নেওয়া, না পেলে সাধারণ প্লে লিংক
-            video_info = data.get("data", {})
-            video_url = video_info.get("hdplay") or video_info.get("play")
-            
-            if not video_url:
-                raise Exception("ভিডিও লিংক পাওয়া যায়নি।")
-
-            # ভিডিও ডাউনলোড
-            video_res = requests.get(video_url, stream=True, timeout=60)
-            video_res.raise_for_status()
-            
-            with open(file_name, 'wb') as f:
-                for chunk in video_res.iter_content(chunk_size=1024*1024):
-                    if chunk:
-                        f.write(chunk)
+        def download_video():
+            ydl_opts = {
+                # bestvideo+bestaudio/best ব্যবহার করলে সর্বোচ্চ রেজোলিউশন (HD) নিশ্চিত হয়
+                'format': 'bestvideo+bestaudio/best', 
+                'outtmpl': file_name,
+                'quiet': True,
+                'no_warnings': True,
+                'impersonate': 'chrome', # curl_cffi ব্যবহার করে টিকটকের ব্লক এড়াবে
+                # টিকটকের সবচেয়ে ভালো সার্ভার থেকে ডাটা আনতে সাহায্য করে
+                'extractor_args': {'tiktok': {'api_hostname': ['api22-normal-c-useast2a.tiktokv.com']}}
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
             return True
 
-        # asyncio.to_thread ব্যবহার করে ইভেন্ট লুপ ব্লক এড়ানো হচ্ছে
-        await asyncio.to_thread(download_hd_video)
+        # asyncio.to_thread ব্যবহার করে ইভেন্ট লুপ ব্লক এড়ানো হচ্ছে
+        await asyncio.to_thread(download_video)
 
-        # টেলিগ্রামে ভিডিও পাঠানো
+        # টেলিগ্রামে ভিডিও পাঠানো (supports_streaming=True দিলে টেলিগ্রাম কমপ্রেস করে না)
         await client.send_video(
             chat_id=message.chat.id,
             video=file_name,
-            caption="✅ আপনার ভিডিও ফুল HD কোয়ালিটিতে ডাউনলোড সম্পন্ন হয়েছে।"
+            caption="✅ আপনার ভিডিও ফুল HD কোয়ালিটিতে ডাউনলোড সম্পন্ন হয়েছে।",
+            supports_streaming=True 
         )
         await msg.delete()
 
