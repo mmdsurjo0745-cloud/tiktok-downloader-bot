@@ -16,7 +16,7 @@ except RuntimeError:
 # =====================================================================
 # Render-এর Environment Variables থেকে তথ্য নেওয়া হচ্ছে
 # =====================================================================
-API_ID = int(os.getenv("API_ID", "28916789")) # Render থেকে নেবে, না পেলে ডিফল্টটি নেবে
+API_ID = int(os.getenv("API_ID", "28916789"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -45,12 +45,13 @@ async def download_handler(client, message: Message):
     # ফাইলের নাম সেট করা
     file_name = f"video_{message.from_user.id}.mp4"
 
-    # yt-dlp এর সেটিংস (ওয়াটারমার্ক ছাড়া ডাউনলোডের জন্য)
+    # yt-dlp এর সেটিংস (curl_cffi এবং impersonate সহ)
     ydl_opts = {
-        'format': 'b',
+        'format': 'b', 
         'outtmpl': file_name,
         'quiet': True,
         'no_warnings': True,
+        'impersonate': 'chrome', # এটি টিকটকের ব্লক এড়াতে সাহায্য করবে
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 
